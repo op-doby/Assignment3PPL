@@ -106,6 +106,9 @@ export const typeofPrim = (p: PrimOp): Result<TExp> =>
     (p.op === 'number?') ? parseTE('(T -> boolean)') :
     (p.op === 'boolean?') ? parseTE('(T -> boolean)') :
     (p.op === 'string?') ? parseTE('(T -> boolean)') :
+    // Addeddddddddddd
+    (p.op === 'any?') ? parseTE('(T -> boolean)') :
+    (p.op === 'never?') ? parseTE('(T -> boolean)') :
     (p.op === 'list?') ? parseTE('(T -> boolean)') :
     (p.op === 'pair?') ? parseTE('(T -> boolean)') :
     (p.op === 'symbol?') ? parseTE('(T -> boolean)') :
