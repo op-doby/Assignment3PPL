@@ -308,6 +308,7 @@ export const isSubType = (te1: TExp, te2: TExp): boolean =>
     isInterTExp(te1) ? isSubType(createInter(te1), te2) :
     isInterTExp(te2) ? isSubType(te1, createInter(te2)) :
     (isProcTExp(te1) && isProcTExp(te2)) ? checkProcTExps(te1, te2) :
+    (isTypePredTExp(te1) && isTypePredTExp(te2)) ? checkProcTExps(te1, te2) :
     isTVar(te1) ? equals(te1, te2) :
     false;
 
