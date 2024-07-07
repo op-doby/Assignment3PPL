@@ -8,7 +8,11 @@
 ;; <void-te>      ::= void     // void-te()
 ;; <any-te>       ::= any      // any-te()
 ;; <never-te>     ::= never    // never-te()
-;; <compound-te>  ::= <proc-te> | <tuple-te> | <union-te>
+;; <compound-te>  ::= <proc-te> | <tuple-te> | <union-te> | <inter-te>
+
+;; <typePredTExp> ::= ( <TExp> -> is? <TExp> )
+
+
 ;; <non-tuple-te> ::= <atomic-te> | <proc-te> | <tvar>
 ;; <proc-te>      ::= [ <tuple-te> -> <non-tuple-te> ] // proc-te(param-tes: list(te), return-te: te)
 ;; <tuple-te>     ::= <non-empty-tuple-te> | <empty-te>
@@ -48,13 +52,18 @@ import { format } from "../shared/format";
 export type TExp =  AtomicTExp | CompoundTExp | TVar;
 export const isTExp = (x: any): x is TExp => isAtomicTExp(x) || isCompoundTExp(x) || isTVar(x);
 
+
+
 export type AtomicTExp = NumTExp | BoolTExp | StrTExp | VoidTExp | AnyTExp | NeverTExp;
 export const isAtomicTExp = (x: any): x is AtomicTExp =>
     isNumTExp(x) || isBoolTExp(x) || isStrTExp(x) || isVoidTExp(x) || isAnyTExp(x) || isNeverTExp(x);
 
+// export type TypePredTExp = TypePredNumber | TypePredBoolTExp | TypePredStrTExp | TypePredVoidTExp | TypePredAnyTExp | TypePredNeverTExp;
+// export const isTypePredTExp = (x: any): x is TypePredTExp =>
+//     isTypePredNumTExp(x) || isTypePredBoolTExp(x) || isTypePredStrTExp(x) || isTypePredVoidTExp(x) || isTypePredAnyTExp(x) || isTypePredNeverTExp(x);
 
-export type CompoundTExp = ProcTExp | TupleTExp | UnionTExp | InterTExp;
-export const isCompoundTExp = (x: any): x is CompoundTExp => isProcTExp(x) || isTupleTExp(x) || isUnionTExp(x) || isInterTExp(x);
+export type CompoundTExp = ProcTExp | TupleTExp | UnionTExp | InterTExp | TypePredTExp;
+export const isCompoundTExp = (x: any): x is CompoundTExp => isProcTExp(x) || isTupleTExp(x) || isUnionTExp(x) || isInterTExp(x) || isTypePredTExp(x);
 
 export type NonTupleTExp = AtomicTExp | ProcTExp | TVar | UnionTExp;
 export const isNonTupleTExp = (x: any): x is NonTupleTExp =>
@@ -93,6 +102,16 @@ export const isProcTExp = (x: any): x is ProcTExp => x.tag === "ProcTExp";
 export const procTExpComponents = (pt: ProcTExp): TExp[] =>
     [...pt.paramTEs, pt.returnTE];
 
+export type TypePredTExp = { tag: "TypePredTExp"; paramTE: TExp; returnTE: TExp; };
+export const makeTypePredTExp = (paramTE: TExp, returnTE: TExp): TypePredTExp =>
+    ({tag: "TypePredTExp", paramTE: paramTE, returnTE: returnTE});
+export const isTypePredTExp = (x: any): x is TypePredTExp => x.tag === "TypePredTExp";
+// Uniform access to all components of a TypePredTExp
+export const TypePredTExpComponents = (pt: TypePredTExp): TExp[] =>
+    [pt.paramTE, pt.returnTE];
+
+
+
 export type TupleTExp = NonEmptyTupleTExp | EmptyTupleTExp;
 export const isTupleTExp = (x: any): x is TupleTExp =>
     isNonEmptyTupleTExp(x) || isEmptyTupleTExp(x);
@@ -114,7 +133,7 @@ export const isUnionTExp = (x: any): x is UnionTExp => x.tag === "UnionTExp";
 
 export type InterTExp = { tag: "InterTExp"; components: TExp[]};
 export const makeInterTExp = (tes: TExp[]): TExp =>
-    normalizeInter(({tag: "InterTExp", components: flattenSortInter(tes)})); // ????????????????????? normalizeInter
+    normalizeInter(({tag: "InterTExp", components: flattenSortInter(tes)})); 
 export const isInterTExp = (x: any): x is InterTExp => x.tag === "InterTExp";
 
 // In the value constructor - make sure the invariants are satisfied
@@ -141,6 +160,8 @@ const normalizeInter = (ute: InterTExp): TExp =>
     includes(makeNeverTExp(), ute.components) ? makeNeverTExp() : 
     (ute.components.length === 1) ? ute.components[0] :
     ute;
+
+
 
 // Flatten all union components into the result
 // and remove duplicates

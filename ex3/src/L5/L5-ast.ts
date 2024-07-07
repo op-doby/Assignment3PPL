@@ -6,10 +6,10 @@
 import { join, map, zipWith } from "ramda";
 import { Sexp, Token } from 's-expression';
 import { isCompoundSExp, isEmptySExp, isSymbolSExp, makeCompoundSExp, makeEmptySExp, makeSymbolSExp, SExpValue, valueToString } from './L5-value';
-import { isTVar, makeFreshTVar, parseTExp, unparseTExp, TExp } from './TExp';
+import { isTVar, makeFreshTVar, parseTExp, unparseTExp, TExp, TypePredTExp, makeTypePredTExp, CompoundTExp, isProcTExp, makeBoolTExp, isTypePredTExp } from './TExp';
 import { allT, first, rest, second, isEmpty, isNonEmptyList } from '../shared/list';
 import { parse as p, isToken, isSexpString } from "../shared/parser";
-import { Result, bind, makeFailure, mapResult, makeOk, mapv } from "../shared/result";
+import { Result, bind, makeFailure, mapResult, makeOk, mapv, safe2 } from "../shared/result";
 import { isArray, isString, isNumericString, isIdentifier } from "../shared/type-predicates";
 import { format } from "../shared/format";
 
@@ -70,9 +70,10 @@ export const isAtomicExp = (x: any): x is AtomicExp =>
     isNumExp(x) || isBoolExp(x) || isStrExp(x) ||
     isPrimOp(x) || isVarRef(x);
 
-export type CompoundExp = AppExp | IfExp | ProcExp | LetExp | LitExp | LetrecExp | SetExp;
+
+export type CompoundExp = AppExp | IfExp | ProcExp | LetExp | LitExp | LetrecExp | SetExp ;
 export const isCompoundExp = (x: any): x is CompoundExp =>
-    isAppExp(x) || isIfExp(x) || isProcExp(x) || isLitExp(x) || isLetExp(x) || isLetrecExp(x) || isSetExp(x);
+    isAppExp(x) || isIfExp(x) || isProcExp(x) || isLitExp(x) || isLetExp(x) || isLetrecExp(x) || isSetExp(x) ;
 export const expComponents = (e: Exp): CExp[] =>
     isIfExp(e) ? [e.test, e.then, e.alt] :
     isProcExp(e) ? e.body :
@@ -239,6 +240,22 @@ export const parseL5CExp = (sexp: Sexp): Result<CExp> =>
     isToken(sexp) ? parseL5Atomic(sexp) :
     makeFailure("CExp cannot be an empty list");
 
+// Addedddd /////////////////////////////////////////////////
+// typecheck.ts
+// const typeOfApp = (app: AppExp, tenv: TEnv): Result<TExp> =>
+//     safe2((rator: TExp, rands: TExp[]) => 
+//         (isProcTExp(rator)) ?
+//             checkCompatibleParams(app, rator.paramTEs, rands) ? makeOk(rator.returnTE)
+//                 : makeFailure(`Parameters do not match in application: ${app}`) :
+//         (isTypePredTExp(rator)) ?
+//             rator.paramType === rands[0] ? makeOk(makeBoolTExp()) :
+//             makeFailure(`Type predicate not satisfied in: ${app}`)
+//             makeFailure(`Unknown rator type in application: ${app}`);
+//     })(typeofExp(app.rator, tenv), mapResult((rand: CExp) => typeofExp(rand, tenv), app.rands));
+
+/////////////////////until here from added - chat 
+
+
 const parseAppExp = (op: Sexp, params: Sexp[]): Result<AppExp> =>
     bind(parseL5CExp(op), (rator: CExp) =>
         mapv(mapResult(parseL5CExp, params), (rands: CExp[]) =>
@@ -248,6 +265,35 @@ const parseIfExp = (params: Sexp[]): Result<IfExp> =>
     params.length !== 3 ? makeFailure(`Expression not of the form (if <cexp> <cexp> <cexp>): ${format(params)}`) :
     mapv(mapResult(parseL5CExp, params), (cexps: CExp[]) => 
         makeIfExp(cexps[0], cexps[1], cexps[2]));
+
+// Addedddd /////////////////////////////////////////////////
+// L5-ast.ts
+const parseTypePredTExp = (x: Sexp): Result<TypePredTExp> =>
+    isArray(x) && x.length === 4 && x[1] === '->' && x[2] === 'is?' ?
+        safe2((paramType: TExp, returnType: TExp) =>
+            makeOk(makeTypePredTExp(paramType, returnType)))
+            (parseTExp(x[0]), parseTExp(x[3])):
+        makeFailure(`Invalid type predicate expression: ${x}`);
+
+///////////////////////////////////////////////
+// import { Sexp } from "s-expression";
+// import { Result, makeFailure, makeOk } from "../shared/result";
+// import { CompoundTExp, TExp } from "./TExp"; // Adjust imports as needed
+
+const parseCompoundTExp = (texps: Sexp[]): Result<CompoundTExp> => 
+    texps.length === 0 ? 
+        makeFailure("Empty type expression") :
+        texps[0] === '->' ?
+            parseFunctionType(texps) : // deleted - if needed to take from chat 
+            texps[1] === 'is?' ?
+                parseTypePredTExp(texps) :
+                makeFailure(`Invalid compound type expression: ${texps}`);   
+
+// Assume the existence of a parseFunctionType function for parsing '->'
+// and a parseTypePredTExp function for parsing 'is?' expressions.
+////////until here- chat 
+
+
 
 // (lambda (<vardecl>*) [: returnTE]? <CExp>+)
 const parseProcExp = (vars: Sexp, rest: Sexp[]): Result<ProcExp> => {
