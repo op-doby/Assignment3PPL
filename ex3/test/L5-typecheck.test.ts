@@ -351,7 +351,7 @@ describe('L52 Type Checker', () => {
         const p0 = `
         (L5
             (define (test : ((inter any number) -> number))
-                (lambda (x : (inter any number)) : number x))
+                (lambda ((x : (inter any number))) : number x))
             (test 3)
         )
         `;
@@ -362,10 +362,11 @@ describe('L52 Type Checker', () => {
         const p0 = `
         (L5
             (define (test : ((inter any number) -> number))
-                (lambda (x : (inter any number)) : number x))
+                (lambda ((x : (inter any number))) : number x))
             (test "hi")
         )
         `;
+        const test = L5typeofProgram(p0);
         expect(L5typeofProgram(p0)).toEqual(makeFailure("Incompatible types: string and number in (test \"hi\")"));
     });
     

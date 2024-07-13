@@ -253,7 +253,7 @@ export const parseL5CExp = (sexp: Sexp): Result<CExp> =>
 //             makeFailure(`Unknown rator type in application: ${app}`);
 //     })(typeofExp(app.rator, tenv), mapResult((rand: CExp) => typeofExp(rand, tenv), app.rands));
 
-/////////////////////until here from added - chat 
+/////////////////////until here from added
 
 
 const parseAppExp = (op: Sexp, params: Sexp[]): Result<AppExp> =>
@@ -266,49 +266,65 @@ const parseIfExp = (params: Sexp[]): Result<IfExp> =>
     mapv(mapResult(parseL5CExp, params), (cexps: CExp[]) => 
         makeIfExp(cexps[0], cexps[1], cexps[2]));
 
-// Addedddd /////////////////////////////////////////////////
+// Added /////////////////////////////////////////////////
 // L5-ast.ts
-const parseTypePredTExp = (x: Sexp): Result<TypePredTExp> =>
-    isArray(x) && x.length === 4 && x[1] === '->' && x[2] === 'is?' ?
-        safe2((paramType: TExp, returnType: TExp) =>
-            makeOk(makeTypePredTExp(paramType, returnType)))
-            (parseTExp(x[0]), parseTExp(x[3])):
-        makeFailure(`Invalid type predicate expression: ${x}`);
+// const parseTypePredTExp = (x: Sexp): Result<TypePredTExp> =>
+//     isArray(x) && x.length === 4 && x[1] === '->' && x[2] === 'is?' ?
+//         safe2((paramType: TExp, returnType: TExp) =>
+//             makeOk(makeTypePredTExp(paramType, returnType)))
+//             (parseTExp(x[0]), parseTExp(x[3])):
+//         makeFailure(`Invalid type predicate expression: ${x}`);
 
-///////////////////////////////////////////////
-// import { Sexp } from "s-expression";
-// import { Result, makeFailure, makeOk } from "../shared/result";
-// import { CompoundTExp, TExp } from "./TExp"; // Adjust imports as needed
-
-const parseCompoundTExp = (texps: Sexp[]): Result<CompoundTExp> => 
-    texps.length === 0 ? 
-        makeFailure("Empty type expression") :
-        texps[0] === '->' ?
-            parseFunctionType(texps) : // deleted - if needed to take from chat 
-            texps[1] === 'is?' ?
-                parseTypePredTExp(texps) :
-                makeFailure(`Invalid compound type expression: ${texps}`);   
-
-// Assume the existence of a parseFunctionType function for parsing '->'
-// and a parseTypePredTExp function for parsing 'is?' expressions.
-////////until here- chat 
+// const parseCompoundTExp = (texps: Sexp[]): Result<CompoundTExp> => 
+//     texps.length === 0 ? 
+//         makeFailure("Empty type expression") :
+//         texps[0] === '->' ?
+//             parseFunctionType(texps) : // deleted
+//             texps[1] === 'is?' ?
+//                 parseTypePredTExp(texps) :
+//                 makeFailure(`Invalid compound type expression: ${texps}`);   
 
 
 
 // (lambda (<vardecl>*) [: returnTE]? <CExp>+)
 const parseProcExp = (vars: Sexp, rest: Sexp[]): Result<ProcExp> => {
-    if (isArray(vars)) {
-        const args = mapResult(parseVarDecl, vars);
-        const body = mapResult(parseL5CExp, rest[0] === ":" ? rest.slice(2) : rest);
-        const returnTE = rest[0] === ":" ? parseTExp(rest[1]) : makeOk(makeFreshTVar());
-        return bind(args, (args: VarDecl[]) =>
-                    bind(body, (body: CExp[]) =>
-                        mapv(returnTE, (returnTE: TExp) =>
-                            makeProcExp(args, body, returnTE))));
-    } else {
-        return makeFailure(`Invalid args ${format(vars)}`)
-    }
+    // Check if vars is an array
+    if (Array.isArray(vars)) {
+        // Parse variable declarations
+        const argsResult = mapResult(parseVarDecl, vars);
+        // Parse the body of the procedure expression
+        const bodyResult = mapResult(parseL5CExp, 
+            rest[0] === ":" && rest[1] === "is?" ? rest.slice(3) : 
+            rest[0] === ":" ? rest.slice(2) : 
+            rest);
+        // Determine the return type
+        const returnType = rest[0] === ":" && rest[1] === "is?" ? parseTExp(rest.slice(1, 3)) :
+            rest[0] === ":" ? parseTExp(rest[1]) : makeOk(makeFreshTVar());
+        // Validate if returnType is a type predicate and if there is exactly one argument
+        if (isTypePredTExp(returnType) && mapv(argsResult, (args: VarDecl[]) => args.length !== 1)) 
+            return makeFailure(`Invalid args for predicate ${format(vars)}`);
+        // Combine results to form a procedure expression
+        return bind(argsResult, (args: VarDecl[]) =>
+            bind(bodyResult, (body: CExp[]) =>
+                mapv(returnType, (returnType: TExp) =>
+                    makeProcExp(args, body, returnType))));
+    } else // Handle case where vars is not an array
+        return makeFailure(`Invalid args ${format(vars)}`);
 }
+
+// const parseProcExp = (vars: Sexp, rest: Sexp[]): Result<ProcExp> => {
+//     if (isArray(vars)) {
+//         const args = mapResult(parseVarDecl, vars);
+//         const body = mapResult(parseL5CExp, rest[0] === ":" ? rest.slice(2) : rest);
+//         const returnTE = rest[0] === ":" ? parseTExp(rest[1]) : makeOk(makeFreshTVar());
+//         return bind(args, (args: VarDecl[]) =>
+//                     bind(body, (body: CExp[]) =>
+//                         mapv(returnTE, (returnTE: TExp) =>
+//                             makeProcExp(args, body, returnTE))));
+//     } else {
+//         return makeFailure(`Invalid args ${format(vars)}`)
+//     }
+// }
 
 const isGoodBindings = (bindings: Sexp): bindings is [Sexp, Sexp][] =>
     isArray(bindings) && allT(isArray, bindings);

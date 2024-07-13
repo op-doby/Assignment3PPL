@@ -4,13 +4,13 @@ import { equals, map, zipWith } from 'ramda';
 import { isAppExp, isBoolExp, isDefineExp, isIfExp, isLetrecExp, isLetExp, isNumExp,
          isPrimOp, isProcExp, isProgram, isStrExp, isVarRef, parseL5Exp, unparse,
          AppExp, BoolExp, DefineExp, Exp, IfExp, LetrecExp, LetExp, NumExp,
-         Parsed, PrimOp, ProcExp, Program, StrExp, parseL5Program } from "./L5-ast";
+         Parsed, PrimOp, ProcExp, Program, StrExp, parseL5Program, isSetExp, isLitExp, CExp } from "./L5-ast";
 import { applyTEnv, makeEmptyTEnv, makeExtendTEnv, TEnv } from "./TEnv";
 import { isProcTExp, makeBoolTExp, makeNumTExp, makeProcTExp, makeStrTExp, makeVoidTExp,
          parseTE, unparseTExp, makeUnionTExp,
-         BoolTExp, NumTExp, StrTExp, TExp, VoidTExp, isSubType } from "./TExp";
+         BoolTExp, NumTExp, StrTExp, TExp, VoidTExp, isSubType, isTypePredTExp, makeDiffTExp } from "./TExp";
 import { isEmpty, allT, first, rest, NonEmptyList, List, isNonEmptyList } from '../shared/list';
-import { Result, makeFailure, bind, makeOk, zipWithResult, either } from '../shared/result';
+import { Result, makeFailure, bind, makeOk, zipWithResult, either, isOk } from '../shared/result';
 import { parse as p } from "../shared/parser";
 import { format } from '../shared/format';
 
@@ -91,7 +91,6 @@ const numOpTExp = parseTE('(number * number -> number)');
 const numCompTExp = parseTE('(number * number -> boolean)');
 const boolOpTExp = parseTE('(boolean * boolean -> boolean)');
 
-// Todo: cons, car, cdr, list
 export const typeofPrim = (p: PrimOp): Result<TExp> =>
     (p.op === '+') ? numOpTExp :
     (p.op === '-') ? numOpTExp :
@@ -103,15 +102,14 @@ export const typeofPrim = (p: PrimOp): Result<TExp> =>
     (p.op === '<') ? numCompTExp :
     (p.op === '=') ? numCompTExp :
     // Important to use a different signature for each op with a TVar to avoid capture
-    (p.op === 'number?') ? parseTE('(T -> boolean)') :
-    (p.op === 'boolean?') ? parseTE('(T -> boolean)') :
-    (p.op === 'string?') ? parseTE('(T -> boolean)') :
-    // Addeddddddddddd
-    (p.op === 'any?') ? parseTE('(T -> boolean)') :
-    (p.op === 'never?') ? parseTE('(T -> boolean)') :
-    (p.op === 'list?') ? parseTE('(T -> boolean)') :
-    (p.op === 'pair?') ? parseTE('(T -> boolean)') :
-    (p.op === 'symbol?') ? parseTE('(T -> boolean)') :
+    // (p.op === 'any?') ? parseTE('(T -> boolean)') :
+    // (p.op === 'never?') ? parseTE('(T -> boolean)') :
+    (p.op === 'number?') ? parseTE('(any -> boolean)') :
+    (p.op === 'boolean?') ? parseTE('(any -> boolean)') :
+    (p.op === 'string?') ? parseTE('(any -> boolean)') :
+    (p.op === 'list?') ? parseTE('(any -> boolean)') :
+    (p.op === 'pair?') ? parseTE('(any -> boolean)') :
+    (p.op === 'symbol?') ? parseTE('(any -> boolean)') :
     (p.op === 'not') ? parseTE('(boolean -> boolean)') :
     (p.op === 'eq?') ? parseTE('(T1 * T2 -> boolean)') :
     (p.op === 'string=?') ? parseTE('(T1 * T2 -> boolean)') :
@@ -144,26 +142,109 @@ export const typeofIfNormal = (ifExp: IfExp, tenv: TEnv): Result<TExp> => {
 };
 
 // L52 Structured methods
-const isTypePredApp = (e: Exp, tenv: TEnv): Result<{/* Add parameters */}> => {
+const isTypePredApp = (e: Exp, tenv: TEnv): Result<AppExp> => {
+    if (isAppExp(e)) { // Check if the expression is an application expression
+        // Check if the operator is a procedure expression and if its return type is a type predicate
+        if (isProcExp(e.rator) && isTypePredTExp(e.rator.returnTE)) 
+            return makeOk(e);
+        // Check if the operator is a variable reference
+        if (isVarRef(e.rator)) {
+            // Apply the type environment to the variable reference
+            const varType = applyTEnv(tenv, e.rator.var);
+            const resolvedType = isOk(varType) ? varType.value : "no";
+            // Check if the resolved type is a procedure type and if its return type is a type predicate
+            if (isProcTExp(resolvedType) && isTypePredTExp(resolvedType.returnTE)) 
+                return makeOk(e);
+        }
+    }
+    return makeFailure("invalid predicate");
 }
 
-export const typeofIf = (ifExp: IfExp, tenv: TEnv): Result<TExp> =>
-    either(
-        bind (isTypePredApp(ifExp.test, tenv), ({/* Add parameter here */}) => {}),
+// Purpose: compute the type of an if-exp that is a Type predicate
+export const typeofIf = (ifExp: IfExp, tenv: TEnv): Result<TExp> => 
+   either(
+        bind (isTypePredApp(ifExp.test, tenv), (exp: AppExp) => typeOfIfPred(ifExp, tenv)),
         makeOk,
         () => typeofIfNormal(ifExp, tenv));
+
+
+export const typeOfIfPred = (ifExp: IfExp, tenv: TEnv): Result<TExp> => {
+    // Helper function to check constraints and combine types
+    const checkConstraints = (testTE: Result<TExp>, thenTE: Result<TExp>, altTE: Result<TExp>, ifExp: IfExp): Result<TExp> => {
+        const constraint1 = bind(testTE, t => checkCompatibleType(t, makeBoolTExp(), ifExp));
+        const constraint2 = bind(thenTE, tTE =>
+            bind(altTE, aTE => makeOk(makeUnion(tTE, aTE))));
+        return bind(constraint1, () => constraint2);
+    };
+
+    // Case when test part is an application expression
+    if (isAppExp(ifExp.test)) {
+        const rator = ifExp.test.rator;
+        const rands = ifExp.test.rands;
+
+        // Check if the operator is a procedure and the first operand is a variable reference
+        if (isProcExp(rator) && isVarRef(rands[0]) && isTypePredTExp(rator.returnTE)) {
+            const varName = rands[0].var;
+            const testType = typeofExp(ifExp.test, tenv);
+            const thenEnv = makeExtendTEnv([varName], [rator.returnTE.whichType], tenv);
+            const thenType = typeofExp(ifExp.then, thenEnv);
+            const prevType = applyTEnv(tenv, varName);
+
+            if (isOk(prevType)) {
+                const altEnv = makeExtendTEnv([varName], [makeDiffTExp(prevType.value, rator.returnTE.whichType)], tenv);
+                const altType = typeofExp(ifExp.alt, altEnv);
+                return checkConstraints(testType, thenType, altType, ifExp);
+            }
+        }
+        // Check if the operator is a variable reference
+        if (isVarRef(rator)) {
+            const varResult = applyTEnv(tenv, rator.var);
+            const varType = isOk(varResult) ? varResult.value : "noType";
+            if (isProcTExp(varType) && isTypePredTExp(varType.returnTE) && isVarRef(rands[0])) {
+                const varName = rands[0].var;
+                const testType = typeofExp(ifExp.test, tenv);
+                const thenEnv = makeExtendTEnv([varName], [varType.returnTE.whichType], tenv);
+                const thenType = typeofExp(ifExp.then, thenEnv);
+                const prevType = applyTEnv(tenv, varName);
+
+                if (isOk(prevType)) {
+                    const altEnv = makeExtendTEnv([varName], [makeDiffTExp(prevType.value, varType.returnTE.whichType)], tenv);
+                    const altType = typeofExp(ifExp.alt, altEnv);
+                    return checkConstraints(testType, thenType, altType, ifExp);
+                }
+            }
+        }
+    }
+    return typeofIfNormal(ifExp, tenv);
+};
 
 
 // Purpose: compute the type of a proc-exp
 // Typing rule:
 // If   type<body>(extend-tenv(x1=t1,...,xn=tn; tenv)) = t
 // then type<lambda (x1:t1,...,xn:tn) : t exp)>(tenv) = (t1 * ... * tn -> t)
+
+// export const typeofProc = (proc: ProcExp, tenv: TEnv): Result<TExp> => {
+//     const argsTEs = map((vd) => vd.texp, proc.args);
+//     const extTEnv = makeExtendTEnv(map((vd) => vd.var, proc.args), argsTEs, tenv);
+//     const constraint1 = bind(typeofExps(proc.body, extTEnv), (body: TExp) => 
+//                             checkCompatibleType(body, proc.returnTE, proc));
+//     return bind(constraint1, _ => makeOk(makeProcTExp(argsTEs, proc.returnTE)));
+// };
+
 export const typeofProc = (proc: ProcExp, tenv: TEnv): Result<TExp> => {
-    const argsTEs = map((vd) => vd.texp, proc.args);
-    const extTEnv = makeExtendTEnv(map((vd) => vd.var, proc.args), argsTEs, tenv);
-    const constraint1 = bind(typeofExps(proc.body, extTEnv), (body: TExp) => 
-                            checkCompatibleType(body, proc.returnTE, proc));
-    return bind(constraint1, _ => makeOk(makeProcTExp(argsTEs, proc.returnTE)));
+    // Extract argument types and create an extended type environment
+    const argTypes = map((arg) => arg.texp, proc.args);
+    const extendedEnv = makeExtendTEnv(map((arg) => arg.var, proc.args), argTypes, tenv);
+    // Helper function to check constraints and return procedure type
+    const checkConstraints = (bodyType: Result<TExp>, expectedType: TExp, proc: ProcExp) => {
+        return bind(bodyType, (body: TExp) =>
+            checkCompatibleType(body, expectedType, proc));
+    };
+    if (isTypePredTExp(proc.returnTE))  // Check if the return type is a type predicate
+        return bind(checkConstraints(typeofExps(proc.body, extendedEnv), makeBoolTExp(), proc), () => makeOk(makeProcTExp(argTypes, proc.returnTE)));
+    // Check the constraints for the return type
+    return bind(checkConstraints(typeofExps(proc.body, extendedEnv), proc.returnTE, proc), () => makeOk(makeProcTExp(argTypes, proc.returnTE)));
 };
 
 // Purpose: compute the type of an app-exp
@@ -174,21 +255,45 @@ export const typeofProc = (proc: ProcExp, tenv: TEnv): Result<TExp> => {
 //      type<randn>(tenv) = tn
 // then type<(rator rand1...randn)>(tenv) = t
 // We also check the correct number of arguments is passed.
-export const typeofApp = (app: AppExp, tenv: TEnv): Result<TExp> =>
-    bind(typeofExp(app.rator, tenv), (ratorTE: TExp) => {
-        if (! isProcTExp(ratorTE)) {
-            return bind(unparseTExp(ratorTE), (rator: string) =>
-                        bind(unparse(app), (exp: string) =>
-                            makeFailure<TExp>(`Application of non-procedure: ${rator} in ${exp}`)));
-        }
-        if (app.rands.length !== ratorTE.paramTEs.length) {
-            return bind(unparse(app), (exp: string) => makeFailure<TExp>(`Wrong parameter numbers passed to proc: ${exp}`));
-        }
-        const constraints = zipWithResult((rand, trand) => bind(typeofExp(rand, tenv), (typeOfRand: TExp) => 
-                                                                checkCompatibleType(typeOfRand, trand, app)),
-                                          app.rands, ratorTE.paramTEs);
-        return bind(constraints, _ => makeOk(ratorTE.returnTE));
+export const typeofApp = (app: AppExp, tenv: TEnv): Result<TExp> => {
+    // Helper function to check constraints for each argument
+    const checkArgs = (rands: CExp[], paramTEs: TExp[], tenv: TEnv, app: AppExp) => {
+        return zipWithResult((rand, paramTE) =>
+            bind(typeofExp(rand, tenv), (randType: TExp) =>
+                checkCompatibleType(randType, paramTE, app)), rands, paramTEs);
+    };
+    return bind(typeofExp(app.rator, tenv), (ratorType: TExp) => {
+        if (!isProcTExp(ratorType)) 
+            return bind(unparseTExp(ratorType), (ratorStr: string) =>
+                bind(unparse(app), (appStr: string) =>
+                    makeFailure<TExp>(`Application of non-procedure: ${ratorStr} in ${appStr}`)));
+        if (app.rands.length !== ratorType.paramTEs.length) 
+            return bind(unparse(app), (appStr: string) =>
+                makeFailure<TExp>(`Wrong number of parameters passed to procedure: ${appStr}`));
+        const constraints = checkArgs(app.rands, ratorType.paramTEs, tenv, app);
+        if (isTypePredTExp(ratorType.returnTE)) 
+            return bind(constraints, () => makeOk(makeBoolTExp()));
+        return bind(constraints, () => makeOk(ratorType.returnTE));
     });
+};
+
+// export const typeofApp = (app: AppExp, tenv: TEnv): Result<TExp> =>
+//     bind(typeofExp(app.rator, tenv), (ratorTE: TExp) => {
+//         if (! isProcTExp(ratorTE)) {
+//             return bind(unparseTExp(ratorTE), (rator: string) =>
+//                         bind(unparse(app), (exp: string) =>
+//                             makeFailure<TExp>(`Application of non-procedure: ${rator} in ${exp}`)));
+//         }
+//         if (app.rands.length !== ratorTE.paramTEs.length) {
+//             return bind(unparse(app), (exp: string) => makeFailure<TExp>(`Wrong parameter numbers passed to proc: ${exp}`));
+//         }
+//         const constraints = zipWithResult((rand, trand) => bind(typeofExp(rand, tenv), (typeOfRand: TExp) => 
+//                                                                 checkCompatibleType(typeOfRand, trand, app)),
+//                                           app.rands, ratorTE.paramTEs);
+//         return bind(constraints, _ => makeOk(ratorTE.returnTE));
+//     });
+
+
 
 // Purpose: compute the type of a let-exp
 // Typing rule:
